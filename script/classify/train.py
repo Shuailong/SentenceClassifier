@@ -277,7 +277,7 @@ def train_valid_loop(train_loader, dev_loader, args, model, test_loader=None, fo
             logger.info(
                 colored(f'Best valid: {args.valid_metric} = {result[args.valid_metric]*100:.2f}% ', 'yellow') +
                 colored(f'(epoch {stats["epoch"]}, {model.updates} updates)', 'yellow'))
-            fold_info = f'.fold_{fold}' if fold else ''
+            fold_info = f'.fold_{fold}' if fold is not None else ''
             model.save(args.model_file + fold_info)
             stats['best_valid'] = result[args.valid_metric]
             stats['best_epoch'] = epoch
