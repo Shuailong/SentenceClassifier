@@ -9,7 +9,7 @@ import os
 import sys
 from pathlib import PosixPath
 
-if sys.version_info < (3, 5):
+if sys.version_info < (3, 6):
     raise RuntimeError('SentenceClassifier supports Python 3.5 or higher.')
 
 DATA_DIR = (

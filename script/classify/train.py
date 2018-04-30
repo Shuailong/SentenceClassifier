@@ -20,9 +20,9 @@ import random
 import numpy as np
 import torch
 
-from blamepipeline import DATA_DIR as DATA_ROOT
-from blamepipeline.claimclass import SentClassifier
-from blamepipeline.claimclass import utils, config
+from classifier import DATA_DIR as DATA_ROOT
+from classifier.classifier import SentClassifier
+from classifier.classifier import utils, config
 
 
 logger = logging.getLogger()

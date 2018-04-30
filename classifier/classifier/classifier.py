@@ -95,7 +95,7 @@ class CNNClassifier(nn.Module):
         self.embedding.weight.data.uniform_(-0.01, 0.01)
 
         # CNN sentence encoder
-        self.sent_cnn = layers.CNN(args)
+        self.sent_cnn = layers.CNN2(args)
         # Output sizes of rnn encoders
 
         self.linear = nn.Linear(args.hidden_size * len(args.kernel_sizes), args.n_class)

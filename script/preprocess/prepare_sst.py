@@ -11,7 +11,7 @@ import logging
 import argparse
 from collections import defaultdict
 
-from blamepipeline import DATA_DIR
+from classifier import DATA_DIR
 import pytreebank
 
 DATASET = os.path.join(DATA_DIR, 'datasets')

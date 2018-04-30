@@ -24,7 +24,7 @@ setup(
     author_email='liangshuailong@gmail.com',
     long_description=readme,
     license=license,
-    python_requires='>=3.5',
+    python_requires='>=3.6',
     packages=find_packages(exclude=('data')),
     install_requires=reqs.strip().split('\n'),
 

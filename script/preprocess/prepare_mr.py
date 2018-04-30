@@ -9,9 +9,8 @@ import re
 import json
 import logging
 import argparse
-from collections import defaultdict
 
-from blamepipeline import DATA_DIR
+from classifier import DATA_DIR
 
 DATASET = os.path.join(DATA_DIR, 'datasets')
 logger = logging.getLogger()
@@ -28,7 +27,7 @@ def stat(sents):
     logger.info(f'min/avg/max sent length: {min_len}/{avg_len:.0f}/{max_len}')
 
 
-def clean_trec(sent):
+def clean_mr(sent):
     sent = re.sub(r"[^A-Za-z0-9(),!?\'\`]", " ", sent)
     sent = re.sub(r"\'s", " \'s", sent)
     sent = re.sub(r"\'ve", " \'ve", sent)
@@ -42,47 +41,44 @@ def clean_trec(sent):
     sent = re.sub(r"\)", " \) ", sent)
     sent = re.sub(r"\?", " \? ", sent)
     sent = re.sub(r"\s{2,}", " ", sent)
-    return sent.strip()
+    return sent.strip().lower()
 
 
 def main(args):
-    logger.info('loading Trec data')
+    logger.info('loading rt-polarity Movie Review data')
 
-    split = ['train', 'test']
-
-    data = defaultdict(list)
+    data = []
     total_samples = 0
-    for tag in split:
-        dataset_file = os.path.join(DATASET, 'trec', f'TREC.{tag}.all')
-        with open(dataset_file, encoding='latin-1') as f:
-            lines = 0
-            for line in f:
-                lines += 1
-                tokens = line.split()
-                label = int(tokens[0])
-                sentence = ' '.join(tokens[1:])
-                sentence = clean_trec(sentence)
-                data[tag].append((sentence, label))
 
-        logger.info('-' * 100)
-        logger.info(f'{tag}: {lines} sentences generates {len(data[tag])} examples.')
-        total_samples += len(data[tag])
-        logger.info('calculate sentence statistics')
-        for i, (sent, label) in enumerate(data[tag]):
-            data[tag][i] = (sent.split(), label)
+    dataset_file = os.path.join(DATASET, 'mr', f'rt-polarity.all')
+    with open(dataset_file, encoding='latin-1') as f:
+        lines = 0
+        for line in f:
+            lines += 1
+            tokens = line.split()
+            label = int(tokens[0])
+            sentence = ' '.join(tokens[1:])
+            sentence = clean_mr(sentence)
+            data.append((sentence, label))
 
-        stat([sent for sent, label in data[tag]])
-        sent_file = os.path.join(DATASET, 'trec', f'trec_{tag}.json')
-        logger.info(f'write samples to {sent_file}')
-
-        with open(sent_file, 'w') as f:
-            for sent, label in data[tag]:
-                line = json.dumps({
-                    'label': label,
-                    'sent': sent
-                })
-                f.write(line + '\n')
     logger.info('-' * 100)
+    logger.info(f'{lines} sentences generates {len(data)} examples.')
+    total_samples += len(data)
+    logger.info('calculate sentence statistics')
+    for i, (sent, label) in enumerate(data):
+        data[i] = (sent.split(), label)
+
+    stat([sent for sent, label in data])
+    sent_file = os.path.join(DATASET, 'mr', f'mr.json')
+    logger.info(f'write samples to {sent_file}')
+
+    with open(sent_file, 'w') as f:
+        for sent, label in data:
+            line = json.dumps({
+                'label': label,
+                'sent': sent
+            })
+            f.write(line + '\n')
 
 
 if __name__ == '__main__':
