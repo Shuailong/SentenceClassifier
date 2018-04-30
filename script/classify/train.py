@@ -214,13 +214,9 @@ def train(args, data_loader, model, global_stats):
 # ------------------------------------------------------------------------------
 
 
-def evaluate(pred, true, eps=1e-9):
-    true_positive = (pred * true).sum().item()
-    precision = true_positive / (pred.sum().item() + eps)
-    recall = true_positive / (true.sum().item() + eps)
-    F1 = 2 * (precision * recall) / (precision + recall + eps)
+def evaluate(pred, true):
     acc = (pred == true).sum().item() / pred.size(0)
-    return {'precision': precision, 'recall': recall, 'F1': F1, 'acc': acc}
+    return {'acc': acc}
 
 
 def validate(args, data_loader, model, global_stats, mode):
@@ -237,7 +233,6 @@ def validate(args, data_loader, model, global_stats, mode):
         inputs = ex[:-1]
         pred = model.predict(inputs)
         true = ex[-1]
-        # We get metrics for independent start/end and joint start/end
         metrics = evaluate(pred, true)
         for name in args.metrics:
             meters[name].update(metrics[name], batch_size)
