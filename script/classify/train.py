@@ -55,7 +55,7 @@ def add_train_args(parser):
                          help='Train on CPU, even if GPUs are available.')
     runtime.add_argument('--gpu', type=int, default=0,
                          help='Run on a specific GPU')
-    runtime.add_argument('--data-workers', type=int, default=1,
+    runtime.add_argument('--data-workers', type=int, default=0,
                          help='Number of subprocesses for data loading')
     runtime.add_argument('--parallel', type='bool', default=False,
                          help='Use DataParallel on all available GPUs')
@@ -64,6 +64,8 @@ def add_train_args(parser):
                                'operations (for reproducibility)'))
     runtime.add_argument('--num-epochs', type=int, default=25,
                          help='Train data iterations')
+    runtime.add_argument('--early-stopping', type=int, default=10,
+                         help='Early stopping patience')
     runtime.add_argument('--batch-size', type=int, default=50,
                          help='Batch size for training')
     runtime.add_argument('--test-batch-size', type=int, default=50,
@@ -83,11 +85,13 @@ def add_train_args(parser):
                        help='dev file')
     files.add_argument('--test-file', type=str, default=None,
                        help='test file')
+    files.add_argument('--stats-file', type='bool', default=False,
+                       help='store training stats in to file for display in codalab')
     files.add_argument('--embed-dir', type=str, default=EMBED_DIR,
                        help='Directory of pre-trained embedding files')
     files.add_argument('--embedding-file', type=str, choices=['word2vec', 'glove'],
                        default=None, help='Space-separated pretrained embeddings file')
-    files.add_argument('--valid-size', type=float, default=0,
+    files.add_argument('--valid-size', type=float, default=0.1,
                        help='validation set ratio')
 
     # General
@@ -136,6 +140,9 @@ def set_defaults(args):
     # Set log + model file names
     args.log_file = os.path.join(args.model_dir, args.model_name + '.txt')
     args.model_file = os.path.join(args.model_dir, args.model_name + '.mdl')
+
+    if args.stats_file:
+        args.stats_file = os.path.join(args.model_dir, args.model_name + '.stats')
 
     # Embeddings options
     if args.embedding_file:
@@ -191,12 +198,13 @@ def train(args, data_loader, model, global_stats):
     # Initialize meters + timers
     train_loss = utils.AverageMeter()
     epoch_time = utils.Timer()
+    train_loss_overall = utils.AverageMeter()
 
     # Run one epoch
     for idx, ex in enumerate(data_loader):
         loss, batch_size = model.update(ex)
         train_loss.update(loss, batch_size)
-        # train_loss.update(*model.update(ex))
+        train_loss_overall.update(loss, batch_size)
 
         if idx % args.display_iter == 0:
             logger.info('train: Epoch = %d | iter = %d/%d | ' %
@@ -207,6 +215,7 @@ def train(args, data_loader, model, global_stats):
 
     logger.info('train: Epoch %d done. Time for epoch = %.2f (s)' %
                 (global_stats['epoch'], epoch_time.time()))
+    return train_loss_overall.avg
 
 # ------------------------------------------------------------------------------
 # Validation loops. Includes functions that
@@ -246,47 +255,71 @@ def validate(args, data_loader, model, global_stats, mode):
                 f'examples = {examples} | valid time = {eval_time.time():.2f} (s).')
     logger.info(' | '.join([f'{k}: {meters[k].avg*100:.2f}%' for k in meters]))
 
-    return {args.valid_metric: meters[args.valid_metric].avg}
+    return {m: meters[m].avg for m in args.metrics}
 
 
-def train_valid_loop(train_loader, dev_loader, args, model, test_loader=None, fold=None):
+def train_valid_loop(train_loader, dev_loader, test_loader, args, model, fold=None):
     # --------------------------------------------------------------------------
     # TRAIN/VALID LOOP
     logger.info('-' * 100)
-    stats = {'timer': utils.Timer(), 'epoch': 0, 'best_valid': 0, 'best_epoch': 0}
+    stats = {'timer': utils.Timer(), 'epoch': 0, 'best_valid': 0, 'best_epoch': 0, 'fold': fold}
     start_epoch = 0
-    for epoch in range(start_epoch, args.num_epochs):
-        stats['epoch'] = epoch
 
-        # Train
-        train(args, train_loader, model, stats)
+    try:
+        for epoch in range(start_epoch, args.num_epochs):
+            stats['epoch'] = epoch
 
-        # Validate train
-        validate(args, train_loader, model, stats, mode='train')
+            # Train
+            loss = train(args, train_loader, model, stats)
+            stats['train_loss'] = loss
 
-        # Validate dev
-        result = validate(args, dev_loader, model, stats, mode='dev')
+            # Validate train
+            train_res = validate(args, train_loader, model, stats, mode='train')
+            for m in train_res:
+                stats['train_' + m] = train_res[m]
 
-        # Save best valid
-        if result[args.valid_metric] > stats['best_valid']:
-            logger.info(
-                colored(f'Best valid: {args.valid_metric} = {result[args.valid_metric]*100:.2f}% ', 'yellow') +
-                colored(f'(epoch {stats["epoch"]}, {model.updates} updates)', 'yellow'))
-            fold_info = f'.fold_{fold}' if fold is not None else ''
-            model.save(args.model_file + fold_info)
-            stats['best_valid'] = result[args.valid_metric]
-            stats['best_epoch'] = epoch
-        logger.info('-' * 100)
+            # Validate dev
+            val_res = validate(args, dev_loader, model, stats, mode='dev')
+            for m in train_res:
+                stats['dev_' + m] = val_res[m]
+
+            # Save best valid
+            if val_res[args.valid_metric] > stats['best_valid']:
+                logger.info(
+                    colored(f'Best valid: {args.valid_metric} = {val_res[args.valid_metric]*100:.2f}% ', 'yellow') +
+                    colored(f'(epoch {stats["epoch"]}, {model.updates} updates)', 'yellow'))
+                fold_info = f'.fold_{fold}' if fold is not None else ''
+                model.save(args.model_file + fold_info)
+                stats['best_valid'] = val_res[args.valid_metric]
+                stats['best_epoch'] = epoch
+            logger.info('-' * 100)
+
+            if args.stats_file:
+                with open(args.stats_file, 'w') as f:
+                    out_stats = stats.copy()
+                    out_stats['timer'] = out_stats['timer'].time()
+                    if not fold:
+                        del out_stats['fold']
+                    f.write(json.dumps(out_stats) + '\n')
+
+            # early stopping
+            if epoch - stats['best_epoch'] >= args.early_stopping:
+                logger.info(colored(f'No improvement for {args.early_stopping} epochs, stop training.', 'red'))
+                break
+    except KeyboardInterrupt:
+        logger.info(colored(f'User ended training. stop.', 'red'))
 
     logger.info('Load best model...')
     model = SentClassifier.load(args.model_file + fold_info, args)
     device = torch.device(f"cuda:{args.gpu}" if args.cuda else "cpu")
     model.to(device)
     stats['epoch'] = stats['best_epoch']
-    if test_loader:
-        test_result = validate(args, test_loader, model, stats, mode='test')
+    if fold:
+        mode = f'fold {fold} test'
     else:
-        test_result = validate(args, dev_loader, model, stats, mode=f'cv-{fold}')
+        mode = 'test'
+
+    test_result = validate(args, test_loader, model, stats, mode=mode)
     return test_result
 
 
@@ -348,7 +381,7 @@ def main(args):
         model = initialize_model(train_exs, dev_exs, test_exs)
         train_loader, dev_loader, test_loader = utils.split_loader(train_exs, test_exs, args, model,
                                                                    dev_exs=dev_exs)
-        result = train_valid_loop(train_loader, dev_loader, args, model, test_loader=test_loader)[args.valid_metric]
+        result = train_valid_loop(train_loader, dev_loader, test_loader, args, model)[args.valid_metric]
         logger.info('-' * 100)
         logger.info(f'Test {args.valid_metric}: {result*100:.2f}%')
     else:
@@ -360,14 +393,15 @@ def main(args):
             fold_samples[sample_fold].append(sample_idx)
         for fold in range(10):
             fold_info = f'for fold {fold}' if fold is not None else ''
-            print(colored(f'\nStarting training {fold_info}...\n', 'blue'))
+            logger.info(colored(f'Starting training {fold_info}...', 'blue'))
             model = initialize_model(train_exs, dev_exs, test_exs)
-            train_loader, dev_loader = utils.split_loader_cv(train_exs, args, model, fold_samples[fold])
-            result = train_valid_loop(train_loader, dev_loader, args, model, fold=fold)
+            train_loader, dev_loader, test_loader = utils.split_loader_cv(train_exs, args, model, fold_samples[fold])
+            result = train_valid_loop(train_loader, dev_loader, test_loader, args, model, fold=fold)
             results.append(result[args.valid_metric])
         result = np.mean(results).item()
         logger.info('-' * 100)
-        logger.info(f'CV {args.valid_metric}: {result*100:.2f}%')
+        logger.info(f'10 fold cross validation test {args.valid_metric}s: {results}')
+        logger.info(f'Averaged test {args.valid_metric}: {result*100:.2f}%')
 
 
 if __name__ == '__main__':
